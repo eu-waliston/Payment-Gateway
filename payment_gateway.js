@@ -1,7 +1,3 @@
-// ============================================
-// PAYMENT GATEWAY COMPLETO EM JAVASCRIPT
-// ============================================
-
 // Configuração do Gateway
 class PaymentGateway {
     constructor(config = {}) {
