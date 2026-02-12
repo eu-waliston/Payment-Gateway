@@ -1,0 +1,12 @@
+{
+  "name": "payment-gateway",
+  "version": "1.0.0",
+  "description": "Payment Gateway modular",
+  "main": "index.js",
+  "type": "commonjs",
+  "scripts": {
+    "dashboard": "node examples/dashboard.js"
+  },
+  "author": "",
+  "license": "MIT"
+}

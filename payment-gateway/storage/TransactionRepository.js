@@ -11,9 +11,9 @@ class TransactionRepository {
         throw new Error('findAll() não implementado');
     }
 
-    findByCustomer(email, timeWindowMs) {
-        throw new Error('findByCustomer() não implementado');
-    }
+    // findByCustomer(email, timeWindowMs) {
+    //     throw new Error('findByCustomer() não implementado');
+    // }
 }
 
 module.exports = TransactionRepository;
