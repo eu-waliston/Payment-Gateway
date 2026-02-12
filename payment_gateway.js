@@ -1,91 +1,94 @@
-// Configuração do Geteway
+// ============================================
+// PAYMENT GATEWAY COMPLETO EM JAVASCRIPT
+// ============================================
 
+// Configuração do Gateway
 class PaymentGateway {
     constructor(config = {}) {
         this.providers = new Map();
-        this.transaction = new Map();
+        this.transactions = new Map();
         this.webhooks = [];
         this.logs = [];
 
-        // configurações padrão
+        // Configurações padrão
         this.config = {
-            retryAttemps: 3,
+            retryAttempts: 3,
             retryDelay: 1000,
-            wbhookTimeout: 5000,
+            webhookTimeout: 5000,
             ...config
-        }
+        };
 
         // Registrar provedores padrão
-        this.registerProvider('stripe', new StripeProvider())
-        this.registerProvider('paypal', new PayPalProvider())
-        this.registerProvider('pix', new PixProvider())
-        this.registerProvider('boleto', new BoletoProvider())
+        this.registerProvider('stripe', new StripeProvider());
+        this.registerProvider('paypal', new PayPalProvider());
+        this.registerProvider('pix', new PixProvider());
+        this.registerProvider('boleto', new BoletoProvider());
 
         console.log('✅ Gateway de Pagamentos inicializado');
     }
 
-    // ============ GERENCIAMENTO DE PROVEDORES ===============
+    // ========== GERENCIAMENTO DE PROVEDORES ==========
     registerProvider(name, provider) {
         this.providers.set(name, provider);
         this.log(`Provedor ${name} registrado`, 'info');
     }
 
     getProvider(name) {
-        if (this.providers.has(name)) {
+        if (!this.providers.has(name)) {
             throw new Error(`Provedor ${name} não encontrado`);
         }
-
         return this.providers.get(name);
     }
 
-    // ============PROCESSAMENTO DE PAGAMENTO =============
-    async processPayment(payemtData) {
+    // ========== PROCESSAMENTO DE PAGAMENTOS ==========
+    async processPayment(paymentData) {
         const transactionId = this.generateTransactionId();
         const startTime = Date.now();
 
         try {
             this.log(`Processando pagamento ${transactionId}`, 'info');
 
-            // 1 validação
-            this.validatePaymentData(payemtData);
+            // 1. Validação
+            this.validatePaymentData(paymentData);
 
-            //2 detecção de fraude
-            await this.fraudeDetection(payemtData);
+            // 2. Detecção de fraude
+            await this.fraudDetection(paymentData);
 
-            //3 Processamento
-            const provider = this.getProvider(payemtData.provider);
+            // 3. Processamento
+            const provider = this.getProvider(paymentData.provider);
             let result = null;
             let attempts = 0;
 
-            while (attempts < this.config.retryAttemps) {
+            while (attempts < this.config.retryAttempts) {
                 try {
-                    result = await provider.process(payemtData);
+                    result = await provider.process(paymentData);
                     break;
                 } catch (error) {
                     attempts++;
-                    if (attempts === this.config.retryAttemps) throw error;
+                    if (attempts === this.config.retryAttempts) throw error;
                     await this.sleep(this.config.retryDelay);
-                    this.log(`TEntativa ${attempts}/${this.config.retryAttemps} para ${transactionId}`, 'warn')
+                    this.log(`Tentativa ${attempts}/${this.config.retryAttempts} para ${transactionId}`, 'warn');
                 }
             }
 
-            // 4 Registrar transação
+            // 4. Registrar transação
             const transaction = {
                 id: transactionId,
-                ...payemtData,
+                ...paymentData,
                 status: result.status || 'pending',
                 providerResponse: result,
                 createdAt: new Date(),
-                procesedAt: new Date(),
+                processedAt: new Date(),
                 processingTime: Date.now() - startTime,
                 attempts
             };
 
             this.transactions.set(transactionId, transaction);
 
-            // 5 Disparar webhooks
-            await this.triggerWebhooks(`payment.processed`, transaction);
-            this.log(`Pagamento ${transactionId} processado com sucesso`, 'success')
+            // 5. Disparar webhooks
+            await this.triggerWebhooks('payment.processed', transaction);
+
+            this.log(`Pagamento ${transactionId} processado com sucesso`, 'success');
 
             return {
                 success: true,
@@ -94,27 +97,28 @@ class PaymentGateway {
                 provider: paymentData.provider,
                 amount: paymentData.amount,
                 receipt: this.generateReceipt(transaction)
-            }
+            };
 
         } catch (error) {
-            this.log(`Erro no pagamento ${transactionId}: ${error.message}`, 'error')
+            this.log(`Erro no pagamento ${transactionId}: ${error.message}`, 'error');
 
             const failedTransaction = {
                 id: transactionId,
-                ...payemtData,
+                ...paymentData,
                 status: 'failed',
                 error: error.message,
                 createdAt: new Date(),
                 processingTime: Date.now() - startTime
             };
 
-            this.transaction.set(transactionId, failedTransaction);
-            await this.triggerWebhooks('payments.failed', failedTransaction);
-            throw new PaymentError(`Falha no pagamento: ${error.message}`, transactionId)
+            this.transactions.set(transactionId, failedTransaction);
+            await this.triggerWebhooks('payment.failed', failedTransaction);
+
+            throw new PaymentError(`Falha no pagamento: ${error.message}`, transactionId);
         }
     }
 
-    // ======== VALIDAÇÃO =========
+    // ========== VALIDAÇÕES ==========
     validatePaymentData(data) {
         const required = ['amount', 'currency', 'provider', 'paymentMethod'];
 
@@ -125,15 +129,15 @@ class PaymentGateway {
         }
 
         if (data.amount <= 0) {
-            throw new Error('Valor deve ser maior que zero')
+            throw new Error('Valor deve ser maior que zero');
         }
 
         if (!['BRL', 'USD', 'EUR'].includes(data.currency)) {
-            throw new Error('Moeda não suportada')
+            throw new Error('Moeda não suportada');
         }
 
         if (!['credit_card', 'debit_card', 'pix', 'boleto', 'paypal'].includes(data.paymentMethod)) {
-            throw new Error('Método de pagamento inválido')
+            throw new Error('Método de pagamento inválido');
         }
 
         if (data.paymentMethod === 'credit_card' || data.paymentMethod === 'debit_card') {
@@ -144,71 +148,106 @@ class PaymentGateway {
     }
 
     validateCreditCard(card) {
-        if (!card) throw new Error('Dados de cartão obrigatórios');
-        if (!card.number || card.number.length < 16) throw new Error('Número de cartão inválido');
-        if (!card.holdername) throw new Error('Nome do titular obrigatório');
-        if (!card.expiryMonth || !card.expiryYear) throw new Error("Data de validade obrigatória");
-        if (!card.cvv || card.cvv.length < 3) throw new Error("CVV inválido");
+        if (!card) throw new Error('Dados do cartão obrigatórios');
+        if (!card.number || card.number.length < 16) throw new Error('Número do cartão inválido');
+        if (!card.holderName) throw new Error('Nome do titular obrigatório');
+        if (!card.expiryMonth || !card.expiryYear) throw new Error('Data de validade obrigatória');
+        if (!card.cvv || card.cvv.length < 3) throw new Error('CVV inválido');
 
         // Validar data de validade
         const now = new Date();
         const expiry = new Date(card.expiryYear, card.expiryMonth - 1);
-        if (expiry < now) throw new Error("Cartão expirado");
+        if (expiry < now) throw new Error('Cartão expirado');
 
         return true;
     }
 
-    // ============ DETECÇÃO DE FRAUDE =============
-    async fraudeDetection(payemtData) {
+    // ========== DETECÇÃO DE FRAUDE ==========
+    async fraudDetection(paymentData) {
         const flags = [];
 
-        //Verificar valor suspeito
-        if (payemtData.amount > 10000) {
+        // Verificar valor suspeito
+        if (paymentData.amount > 10000) {
             flags.push('high_amount');
         }
 
-        // Verificar mpultiplas tentativas
-        const recentTransactions = Array.from(this.transactions.value())
-            .filter(t => t.customerEmail === payemtData.customerEmail)
+        // Verificar múltiplas tentativas
+        const recentTransactions = Array.from(this.transactions.values())
+            .filter(t => t.customerEmail === paymentData.customerEmail)
             .filter(t => {
                 const timeDiff = Date.now() - new Date(t.createdAt).getTime();
-                return timeDiff < 3600000; //ultima hora
+                return timeDiff < 3600000; // Última hora
             });
 
         if (recentTransactions.length > 3) {
-            flags.push('high_amount');
+            flags.push('multiple_attempts');
         }
 
         // Verificar BIN do cartão
-        if (payemtData.cardDetails) {
-            const bin = payemtData.cardDetails.number.substring(0, 0);
+        if (paymentData.cardDetails) {
+            const bin = paymentData.cardDetails.number.substring(0, 6);
             if (this.isSuspiciousBin(bin)) {
-                flags.push('suspicious_bin')
+                flags.push('suspicious_bin');
             }
         }
 
-        if (flasgs.length > 0) {
-            this.log(`Possivel fraude detectada: ${flags.join(', ')}`, 'warn')
+        if (flags.length > 0) {
+            this.log(`Possível fraude detectada: ${flags.join(', ')}`, 'warn');
 
             if (flags.includes('multiple_attempts') || flags.includes('suspicious_bin')) {
-                throw new Error(`Transação bloqueada por suspeia de fraude: ${flags.join(', ')}`);
+                throw new Error(`Transação bloqueada por suspeita de fraude: ${flags.join(', ')}`);
             }
         }
+
         return flags;
     }
 
     isSuspiciousBin(bin) {
         // Lista de BINs suspeitos (exemplo)
-        const suspiciousBins = ['123456', '654321', '99999'];
-        return suspiciousBins.includes(bin)
+        const suspiciousBins = ['123456', '654321', '999999'];
+        return suspiciousBins.includes(bin);
+    }
+
+    // ========== GERENCIAMENTO DE WEBHOOKS ==========
+    registerWebhook(event, url) {
+        this.webhooks.push({ event, url });
+        this.log(`Webhook registrado para ${event}: ${url}`, 'info');
+    }
+
+    async triggerWebhooks(event, data) {
+        const relevantWebhooks = this.webhooks.filter(w => w.event === event);
+
+        for (const webhook of relevantWebhooks) {
+            try {
+                const controller = new AbortController();
+                const timeoutId = setTimeout(() => controller.abort(), this.config.webhookTimeout);
+
+                // Simular envio de webhook
+                await fetch(webhook.url, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        event,
+                        timestamp: new Date().toISOString(),
+                        data
+                    }),
+                    signal: controller.signal
+                });
+
+                clearTimeout(timeoutId);
+                this.log(`Webhook ${event} enviado para ${webhook.url}`, 'success');
+            } catch (error) {
+                this.log(`Falha no webhook ${webhook.url}: ${error.message}`, 'error');
+            }
+        }
     }
 
     // ========== CONSULTAS E RELATÓRIOS ==========
     getTransaction(id) {
-        if (!this.transaction.has(id)) {
+        if (!this.transactions.has(id)) {
             throw new Error(`Transação ${id} não encontrada`);
         }
-        return this.transaction.get(id);
+        return this.transactions.get(id);
     }
 
     getTransactions(filters = {}) {
@@ -223,12 +262,13 @@ class PaymentGateway {
         }
 
         if (filters.endDate) {
-            transactions = transactions.filter(t => new Date(t.createdAt) <= new Date(filters.endDate))
+            transactions = transactions.filter(t => new Date(t.createdAt) <= new Date(filters.endDate));
         }
 
         if (filters.provider) {
-            transactions = transactions.filter(t => t.provider === filters.provider)
+            transactions = transactions.filter(t => t.provider === filters.provider);
         }
+
         return transactions;
     }
 
@@ -241,7 +281,6 @@ class PaymentGateway {
             successful: transactions.filter(t => t.status === 'completed' || t.status === 'paid').length,
             failed: transactions.filter(t => t.status === 'failed').length,
             pending: transactions.filter(t => t.status === 'pending').length,
-
             byProvider: {
                 stripe: transactions.filter(t => t.provider === 'stripe').length,
                 paypal: transactions.filter(t => t.provider === 'paypal').length,
@@ -254,19 +293,17 @@ class PaymentGateway {
 
     // ========== UTILITÁRIOS ==========
     generateTransactionId() {
-        return `
-            TXN_${Date.now()}_${Math.random().toString(36).substring(2, 0)}
-        `
+        return `TXN_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
     }
 
     generateReceipt(transaction) {
         return {
-            receipId: `REC_${transaction.id}`,
+            receiptId: `REC_${transaction.id}`,
             transactionId: transaction.id,
             amount: transaction.amount,
             currency: transaction.currency,
             status: transaction.status,
-            date: transaction.procesedAt,
+            date: transaction.processedAt,
             paymentMethod: transaction.paymentMethod,
             provider: transaction.provider,
             customerEmail: transaction.customerEmail
@@ -280,33 +317,31 @@ class PaymentGateway {
             message
         };
 
-        this.logo.push(logEntry);
+        this.logs.push(logEntry);
 
-        if (type === 'error') console.log(`🔴 ${message}`);
-        else if (type === 'warn') console.log(`🟡 ${message}`);
+        if (type === 'error') console.error(`🔴 ${message}`);
+        else if (type === 'warn') console.warn(`🟡 ${message}`);
         else if (type === 'success') console.log(`🟢 ${message}`);
-        else console.log(`🔵 ${message}`)
-
+        else console.log(`🔵 ${message}`);
     }
 
     getLogs(limit = 100) {
-        return this.slice(-limit)
+        return this.logs.slice(-limit);
     }
 
     sleep(ms) {
-        return new Promise(resolve => setTimeout(resolve, ms))
+        return new Promise(resolve => setTimeout(resolve, ms));
     }
 }
 
 // ========== PROVEDORES DE PAGAMENTO ==========
-
 class StripeProvider {
-    async process(payemtData) {
+    async process(paymentData) {
         console.log('💳 Processando com Stripe...');
         await this.sleep(500);
 
         // Simular processamento
-        if (payemtData.amount > 50000) {
+        if (paymentData.amount > 50000) {
             throw new Error('Valor acima do limite para cartão de crédito');
         }
 
@@ -314,8 +349,8 @@ class StripeProvider {
             provider: 'stripe',
             status: 'completed',
             transactionId: `STR_${Date.now()}`,
-            authorizationCode: Math.random().toString(30).substring(2, 8).toUpperCase()
-        }
+            authorizationCode: Math.random().toString(36).substr(2, 8).toUpperCase()
+        };
     }
 
     sleep(ms) {
@@ -342,7 +377,7 @@ class PayPalProvider {
 }
 
 class PixProvider {
-    async process(payemtData) {
+    async process(paymentData) {
         console.log('📱 Gerando PIX...');
         await this.sleep(300);
 
@@ -350,19 +385,19 @@ class PixProvider {
             provider: 'pix',
             status: 'pending',
             transactionId: `PIX_${Date.now()}`,
-            qrCode: `PIX:00020126330014BR.GOV.BCB.PIX0114${Math.random().toString(36).substring(2, 20)}`,
-            qrCodeText: `0020126330014BR.GOV.BCB.PIX0114${Math.random().toString(36).substring(2, 20)}`,
-            expiresAt: new Date(Date.now() + 3600000) // 1h
-        }
+            qrCode: `PIX:00020126330014BR.GOV.BCB.PIX0114${Math.random().toString(36).substr(2, 20)}`,
+            qrCodeText: `00020126330014BR.GOV.BCB.PIX0114${Math.random().toString(36).substr(2, 20)}`,
+            expiresAt: new Date(Date.now() + 3600000) // 1 hora
+        };
     }
 
     sleep(ms) {
-        return new Promise(resolve => setTimeout(resolve, ms))
+        return new Promise(resolve => setTimeout(resolve, ms));
     }
 }
 
 class BoletoProvider {
-    async process(payemtData) {
+    async process(paymentData) {
         console.log('📄 Gerando Boleto...');
         await this.sleep(200);
 
@@ -371,16 +406,17 @@ class BoletoProvider {
             status: 'pending',
             transactionId: `BOL_${Date.now()}`,
             boletoNumber: this.generateBoletoNumber(),
-            barcode: this.generateBarCode(),
+            barcode: this.generateBarcode(),
             expiresAt: new Date(Date.now() + 86400000 * 3), // 3 dias
-            url: `https://boleto.exemplo.com${Date.now()}`
-        }
+            url: `https://boleto.exemplo.com/${Date.now()}`
+        };
     }
 
     generateBoletoNumber() {
-        return `${Math.floor(Math.random() * 10000000000)}-${Math.floor(Math.random() * 1000)}`
+        return `${Math.floor(Math.random() * 10000000000)}-${Math.floor(Math.random() * 100)}`;
     }
-    generateBarCode() {
+
+    generateBarcode() {
         return `34191.${Math.floor(Math.random() * 10000)} ${Math.floor(Math.random() * 10000)}`;
     }
 
@@ -389,29 +425,27 @@ class BoletoProvider {
     }
 }
 
-// =========== ERROR CUSTOM ============
-
+// ========== ERROR CUSTOM ==========
 class PaymentError extends Error {
     constructor(message, transactionId) {
-        super(message)
-        this.name = 'PaymentError',
-            this.transactionId = transactionId,
-            this.timestamp = new Date().toISOString();
+        super(message);
+        this.name = 'PaymentError';
+        this.transactionId = transactionId;
+        this.timestamp = new Date().toISOString();
     }
 }
 
-// ========== EXEMPLO DE USO ===========
-
+// ========== EXEMPLO DE USO ==========
 async function main() {
-    // crair instancia do gateway
+    // Criar instância do gateway
     const gateway = new PaymentGateway({
-        retryAttemps: 3,
+        retryAttempts: 3,
         webhookTimeout: 3000
     });
 
     // Registrar webhooks
-    gateway.registerWebhook('payment.processed', 'https://minhaapi.com/webhooks/payment')
-    gateway.registerWebhook('payment.failed', 'https://minhaapi.com/webhooks/failed')
+    gateway.registerWebhook('payment.processed', 'https://minhaapi.com/webhooks/payment');
+    gateway.registerWebhook('payment.failed', 'https://minhaapi.com/webhooks/failed');
 
     // Exemplo 1: Pagamento com Stripe
     try {
@@ -420,21 +454,20 @@ async function main() {
             currency: 'BRL',
             provider: 'stripe',
             paymentMethod: 'credit_card',
-            customerEmail: 'client@email.com',
+            customerEmail: 'cliente@email.com',
             cardDetails: {
                 number: '4111111111111111',
-                holdername: 'João Silva',
+                holderName: 'João Silva',
                 expiryMonth: 12,
                 expiryYear: 2025,
                 cvv: '123'
             },
             installments: 1
-        })
+        });
 
-        console.log('✅ Pagamento 1: ', payment1);
-
+        console.log('✅ Pagamento 1:', payment1);
     } catch (error) {
-        console.log('❌ Erro: ', error.message);
+        console.error('❌ Erro:', error.message);
     }
 
     // Exemplo 2: Pagamento com PIX
@@ -453,9 +486,8 @@ async function main() {
             qrCode: payment2.providerResponse.qrCode,
             expiresAt: payment2.providerResponse.expiresAt
         });
-
     } catch (error) {
-        console.log('❌ Erro', error.message);
+        console.error('❌ Erro:', error.message);
     }
 
     // Exemplo 3: Pagamento com Boleto
@@ -466,19 +498,17 @@ async function main() {
             provider: 'boleto',
             paymentMethod: 'boleto',
             customerEmail: 'terceiro@email.com',
-            customName: 'Maria Santos',
+            customerName: 'Maria Santos',
             customerDocument: '123.456.789-00'
-        })
+        });
 
         console.log('✅ Pagamento 3:', {
             transactionId: payment3.transactionId,
             boletoNumber: payment3.providerResponse.boletoNumber,
             url: payment3.providerResponse.url
         });
-
     } catch (error) {
-        console.log('❌ Erro:', error.message);
-
+        console.error('❌ Erro:', error.message);
     }
 
     // Exemplo 4: Pagamento com PayPal
@@ -491,33 +521,33 @@ async function main() {
             customerEmail: 'paypal@email.com',
             returnUrl: 'https://minhaapi.com/success',
             cancelUrl: 'https://minhaapi.com/cancel'
-        })
+        });
+
         console.log('✅ Pagamento 4:', payment4);
     } catch (error) {
-        console.log('❌ Erro:', error.message);
+        console.error('❌ Erro:', error.message);
     }
 
-    // Exemplo 5: Pagamento que vai falhar (fraude) 
+    // Exemplo 5: Pagamento que vai falhar (fraude)
     try {
         const payment5 = await gateway.processPayment({
-            amount: 1500.00,
+            amount: 15000.00,
             currency: 'BRL',
             provider: 'stripe',
             paymentMethod: 'credit_card',
-            customerEmail: 'fraude@test.com',
+            customerEmail: 'fraud@test.com',
             cardDetails: {
-                number: '123456789123456', // BIN suspeito
+                number: '1234567890123456', // BIN suspeito
                 holderName: 'Teste Fraude',
                 expiryMonth: 12,
                 expiryYear: 2030,
                 cvv: '123'
             }
-        })
+        });
+
         console.log('✅ Pagamento 5:', payment5);
-
     } catch (error) {
-        console.log('❌ Bloqueando por fraude;', error.message);
-
+        console.log('❌ Bloqueado por fraude:', error.message);
     }
 
     // Consultar transações
@@ -525,13 +555,13 @@ async function main() {
     console.log('-------------------');
 
     // Transações por status
-    const completed = gateway.getTransactions({ status: 'completed' })
+    const completed = gateway.getTransactions({ status: 'completed' });
     console.log(`✅ Pagamentos completos: ${completed.length}`);
 
-    const padding = gateway.getTransactions({ status: 'pending' })
+    const pending = gateway.getTransactions({ status: 'pending' });
     console.log(`⏳ Pagamentos pendentes: ${pending.length}`);
 
-    const failed = gateway.getTransactions({ status: 'failed' })
+    const failed = gateway.getTransactions({ status: 'failed' });
     console.log(`❌ Pagamentos falhos: ${failed.length}`);
 
     // Resumo completo
@@ -542,12 +572,12 @@ async function main() {
     console.log('\n📝 ÚLTIMOS LOGS:');
     gateway.getLogs(10).forEach(log => {
         console.log(`[${log.timestamp}] ${log.type}: ${log.message}`);
-    })
+    });
 
     // Buscar transação específica
     if (completed.length > 0) {
-        const firstTransaction = gateway.getTransaction(completed[0].id)
-        console.log('\n🔍 DETALHE DA TRANSAÇÃO:')
+        const firstTransaction = gateway.getTransaction(completed[0].id);
+        console.log('\n🔍 DETALHE DA TRANSAÇÃO:');
         console.log(firstTransaction);
     }
 }
@@ -556,4 +586,4 @@ async function main() {
 main().catch(console.error);
 
 // Exportar para uso em outros módulos
-module.exports = {}
+module.exports = { PaymentGateway, PaymentError };
